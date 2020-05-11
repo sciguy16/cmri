@@ -13,28 +13,116 @@ const UART: &str = "/dev/ttyAMA1";
 const BAUD_RATE: u32 = 19200;
 const RTS_PIN: u8 = 11;
 const PORT: u16 = 4000;
+const CMRI_PREAMBLE_BYTE: u8 = 0xff;
 const CMRI_START_BYTE: u8 = 0x02;
 const CMRI_STOP_BYTE: u8 = 0x03;
+const CMRI_ESCAPE_BYTE: u8 = 0x10;
 // number of byte-lengths extra to wait to account for delays
 const EXTRA_TX_TIME: u64 = 2;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum CmriState {
     Idle,
-    Receiving,
+    Attn,
+    Start,
+    Addr,
+    Type,
+    Data,
+    Escape,
 }
 
+#[derive(Clone, Debug)]
 struct CmriPacket {
     payload: Vec<u8>,
+    state: CmriState,
 }
 
 impl CmriPacket {
     fn new() -> Self {
-        Self {
+        let mut s = Self {
             // capacity is the max length from
             // https://github.com/madleech/ArduinoCMRI/blob/master/CMRI.h
             payload: Vec::with_capacity(258),
+            state: CmriState::Idle,
+        };
+        s.append(&mut [255_u8, 255]);
+        s
+    }
+
+    /// Try to interpret the next byte read it. Returns an Err(CmriState)
+    /// with the current state if the message is still happening or an Ok(())
+    /// if the message is complete to suggest to the processor that it might
+    /// want to process the full packet.
+    fn try_push(&mut self, byte: u8) -> Result<(), CmriState> {
+        use CmriState::*;
+        match self.state {
+            Idle => {
+                // Idle to Attn if byte is PREAMBLE
+                if byte == CMRI_PREAMBLE_BYTE {
+                    self.payload.clear();
+                    self.payload.push(byte);
+                    self.state = Attn;
+                }
+                // Ignore other bytes while Idle
+            }
+            Attn => {
+                // Attn to Start if byte is PREAMBLE
+                if byte == CMRI_PREAMBLE_BYTE {
+                    self.payload.push(byte);
+                    self.state = Start;
+                } else {
+                    // Otherwise discard and reset to Idle
+                    self.payload.clear();
+                    self.state = Idle;
+                }
+            }
+            Start => {
+                // start byte must be valid
+                if byte == CMRI_START_BYTE {
+                    self.payload.push(byte);
+                    self.state = Addr;
+                } else {
+                    // Otherwise discard and reset to Idle
+                    self.payload.clear();
+                    self.state = Idle;
+                }
+            }
+            Addr => {
+                // Take the next byte as-is for an address
+                self.payload.push(byte);
+                self.state = Type;
+            }
+            Type => {
+                // Take the next byte as-is for message type
+                self.payload.push(byte);
+                self.state = Data;
+            }
+            Data => {
+                match byte {
+                    CMRI_ESCAPE_BYTE => {
+                        // escape the next byte
+                        self.payload.push(byte);
+                        self.state = Escape;
+                    }
+                    CMRI_STOP_BYTE => {
+                        // end transmission
+                        self.payload.push(byte);
+                        self.state = Idle;
+                        return Ok(());
+                    }
+                    _ => {
+                        // any other byte we take as data
+                        self.payload.push(byte);
+                    }
+                }
+            }
+            Escape => {
+                // Escape the next byte, so accept it as data.
+                self.payload.push(byte);
+                self.state = Data;
+            }
         }
+        Err(self.state)
     }
 
     fn append(&mut self, buf: &mut [u8]) {
@@ -63,11 +151,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     thread::spawn(move || start_listener(tcp_to_485_tx));
 
     let mut rts_pin = Gpio::new()?.get(RTS_PIN)?.into_output();
-    rts_pin.set_high(); // set RTS high to put MAX485 into RX mode
+    rts_pin.set_low(); // set RTS high to put MAX485 into RX mode
     let mut uart = Uart::with_path(UART, BAUD_RATE, Parity::None, 8, 1)?;
     let mut buffer = [0_u8];
     let mut rx_packet = CmriPacket::new();
-    let mut state = CmriState::Idle;
 
     // 8 bits * microseconds * seconds per bit
     let byte_time = (8_f64 * 1_000_000_f64 * 1_f64 / (BAUD_RATE as f64)) as u64;
@@ -79,12 +166,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             Ok(packet) => {
                 // send the packet out of the uart
                 println!("Sending down uart");
-                rts_pin.set_low();
+                rts_pin.set_high();
                 uart.write(&packet.payload)?; // default non-blocking
                 thread::sleep(Duration::from_micros(
                     (EXTRA_TX_TIME + packet.len() as u64) * byte_time,
                 )); // wait until all data transmitted
-                rts_pin.set_high();
+                rts_pin.set_low();
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
@@ -95,30 +182,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         // Try reading the uart
         if uart.read(&mut buffer)? > 0 {
-            match buffer[0] {
-                CMRI_START_BYTE => {
-                    // Force state to rx
-                    state = CmriState::Receiving;
-                    rx_packet = CmriPacket::new();
-                    rx_packet.append(&mut buffer);
+            match rx_packet.try_push(buffer[0]) {
+                Ok(()) => {
+                    // Got a full packet
+                    println!("Received uart packet: {:?}", rx_packet);
                 }
-                CMRI_STOP_BYTE => {
-                    rx_packet.append(&mut buffer);
-                    println!("Received from uart: {}", rx_packet);
-                    rx_packet = CmriPacket::new();
-                    // force state to idle
-                    state = CmriState::Idle;
-                }
-                _ => {
-                    // only append byte if we are currently receiving,
-                    // otherwise ignore because it's probably an idle 0xFF
-                    match state {
-                        CmriState::Receiving => {
-                            rx_packet.append(&mut buffer);
-                        }
-                        CmriState::Idle => {}
-                    }
-                }
+                Err(_) => {}, // Still receiving
             }
             buffer = [0];
         }
@@ -149,36 +218,17 @@ fn start_listener(tcp_to_485_tx: mpsc::Sender<CmriPacket>) {
 fn handle_tcp_client(mut stream: TcpStream, channel: mpsc::Sender<CmriPacket>) {
     let mut buf = [0_u8; 1];
     let mut packet: CmriPacket = CmriPacket::new();
-    let mut state = CmriState::Idle;
     loop {
         // try reading a byte off the stream
         match stream.read(&mut buf) {
             Ok(1) => {
                 // got a single byte
-                match buf[0] {
-                    CMRI_START_BYTE => {
-                        // make a new packet
-                        state = CmriState::Receiving;
-                        packet = CmriPacket::new();
-                        packet.append(&mut buf);
-                    }
-                    CMRI_STOP_BYTE => {
-                        // packet has finished, send it away down the uart
-                        packet.append(&mut buf);
-                        println!("Got packet {}", packet);
-                        channel.send(packet).unwrap();
-                        packet = CmriPacket::new();
-                        state = CmriState::Idle;
-
-                    }
-                    _b => {
-                        // any other character, append to buffer
-                        match state {
-                            CmriState::Receiving => {
-                                packet.append(&mut buf);
-                            }
-                            CmriState:: Idle => {}
-                        }
+                match packet.try_push(buf[0]) {
+                    Err(_) => {}, // still listening
+                    Ok(()) => {
+                        // message is complete!!
+                        println!("Received TCP message {:?}", packet);
+                        channel.send(packet.clone()).unwrap();
                     }
                 }
             }
