@@ -165,7 +165,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let byte_time = (8_f64 * 1_000_000_f64 * 1_f64 / (BAUD_RATE as f64)) as u64;
 
     rts_pin.set_high();
-    uart.write(&vec![0x65, 0x65, 0x65, 0x65, 0x00, 0x00, 0x00, 0x66, 0x66])?;
+    uart.write(&[0x65, 0x65, 0x65, 0x65, 0x00, 0x00, 0x00, 0x66, 0x66])?;
     uart.drain()?;
     rts_pin.set_low();
     loop {
@@ -258,6 +258,7 @@ fn handle_tcp_client(
             Err(e) => {
                 println!("Read failed: {}", e);
                 stream.shutdown(Shutdown::Both).unwrap();
+                break;
             }
             _ => {}
         }
@@ -272,8 +273,13 @@ fn handle_tcp_client(
             }
             Ok(msg) => {
                 // got a packet, let's send it!
-                stream.write_all(&msg.payload).unwrap();
+                println!("Forwarding packet to TCP stream");
+                if let Err(e) = stream.write_all(&msg.payload) {
+                    println!("Unable to write payload! Error: {}", e);
+                    break;
+                }
             }
         }
     }
+    println!("Client exited");
 }
