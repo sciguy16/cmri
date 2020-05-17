@@ -225,15 +225,11 @@ fn start_listener(
                 let stream_sender = stream.try_clone().unwrap();
 
                 // Start thread that receives from tcp and sends to uart
-                thread::spawn(move || {
-                    tcp_rx(stream, sender)
-                });
+                thread::spawn(move || tcp_rx(stream, sender));
 
                 // start thread that receives from uart channel and sends
                 // to tcp
-                thread::spawn(move || {
-                    tcp_tx(stream_sender, receiver)
-                });
+                thread::spawn(move || tcp_tx(stream_sender, receiver));
             }
             Err(e) => {
                 println!("Connection failed with error \"{}\"", e);
@@ -243,10 +239,7 @@ fn start_listener(
     drop(listener);
 }
 
-fn tcp_rx(
-    mut stream: TcpStream,
-    tx_channel: mpsc::Sender<CmriPacket>,
-) {
+fn tcp_rx(mut stream: TcpStream, tx_channel: mpsc::Sender<CmriPacket>) {
     let mut buf = [0_u8; 1];
     let mut packet: CmriPacket = CmriPacket::new();
     loop {
