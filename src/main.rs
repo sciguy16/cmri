@@ -192,6 +192,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         // Try reading the uart
         if uart.read(&mut buffer)? > 0 {
+            #[allow(clippy::single_match)]
             match rx_packet.try_push(buffer[0]) {
                 Ok(()) => {
                     // Got a full packet
