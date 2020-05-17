@@ -157,7 +157,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut rts_pin = Gpio::new()?.get(RTS_PIN)?.into_output();
     rts_pin.set_low(); // set RTS high to put MAX485 into RX mode
-    let mut uart = Uart::with_path(UART, BAUD_RATE, Parity::None, 8, 1)?;
+    let mut uart = Uart::with_path(UART, BAUD_RATE, Parity::None, 8, 2)?;
     let mut buffer = [0_u8];
     let mut rx_packet = CmriPacket::new();
 
