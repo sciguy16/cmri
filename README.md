@@ -1,5 +1,7 @@
 # cmri_ip_to_485
 
+![Build](https://github.com/sciguy16/cmri_ip_to_485/workflows/Rust/badge.svg?branch=master)
+
 Userland service that runs on a Raspberry Pi and acts as a proxy between JMRI on TCP and a C/MRI network running over RS485.
 
 ## Usage
