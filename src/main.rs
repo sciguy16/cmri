@@ -165,7 +165,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let byte_time = (8_f64 * 1_000_000_f64 * 1_f64 / (BAUD_RATE as f64)) as u64;
 
     rts_pin.set_high();
-    uart.write(&[0x65, 0x65, 0x65, 0x65, 0x00, 0x00, 0x00, 0x66, 0x66])?;
     uart.drain()?;
     rts_pin.set_low();
     loop {
@@ -221,8 +220,19 @@ fn start_listener(
                 println!("Connection from {}", stream.peer_addr().unwrap());
                 let sender = tcp_to_485_tx.clone();
                 let receiver = rs485_to_tcp_rx.clone();
+                // Clone the stream handle so that it can be accessed
+                // by two threads
+                let stream_sender = stream.try_clone().unwrap();
+
+                // Start thread that receives from tcp and sends to uart
                 thread::spawn(move || {
-                    handle_tcp_client(stream, sender, receiver)
+                    tcp_rx(stream, sender)
+                });
+
+                // start thread that receives from uart channel and sends
+                // to tcp
+                thread::spawn(move || {
+                    tcp_tx(stream_sender, receiver)
                 });
             }
             Err(e) => {
@@ -233,12 +243,10 @@ fn start_listener(
     drop(listener);
 }
 
-fn handle_tcp_client(
+fn tcp_rx(
     mut stream: TcpStream,
     tx_channel: mpsc::Sender<CmriPacket>,
-    rx_channel: crossbeam_channel::Receiver<CmriPacket>,
 ) {
-    use crossbeam_channel::TryRecvError;
     let mut buf = [0_u8; 1];
     let mut packet: CmriPacket = CmriPacket::new();
     loop {
@@ -262,7 +270,16 @@ fn handle_tcp_client(
             }
             _ => {}
         }
+    }
+    println!("client exited");
+}
 
+fn tcp_tx(
+    mut stream: TcpStream,
+    rx_channel: crossbeam_channel::Receiver<CmriPacket>,
+) {
+    use crossbeam_channel::TryRecvError;
+    loop {
         // if there is data to send then send it
         match rx_channel.try_recv() {
             Err(TryRecvError::Empty) => {} // do nothing
