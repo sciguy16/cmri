@@ -272,13 +272,13 @@ fn tcp_tx(
     mut stream: TcpStream,
     rx_channel: crossbeam_channel::Receiver<CmriPacket>,
 ) {
-    use crossbeam_channel::TryRecvError;
+    
     loop {
         // if there is data to send then send it
-        match rx_channel.try_recv() {
-            Err(TryRecvError::Empty) => {} // do nothing
-            Err(TryRecvError::Disconnected) => {
-                println!("Oh no, a bad");
+        match rx_channel.recv() {
+            //Err(RecvError::Empty) => {} // do nothing
+            Err(e) => {
+                println!("Receive error: {}", e);
                 stream.shutdown(Shutdown::Both).unwrap();
                 break;
             }
