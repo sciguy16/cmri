@@ -212,6 +212,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
+
+        thread::sleep(Duration::from_millis(1));
     }
 
     Ok(())
