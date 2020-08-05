@@ -39,7 +39,7 @@ pub struct CmriStateMachine {
 }
 
 impl CmriStateMachine {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             state: CmriState::Idle,
             payload: [0_u8; RX_BUFFER_LEN],
@@ -48,7 +48,7 @@ impl CmriStateMachine {
     }
 
     /// Returns the current state of the system
-    fn state(&self) -> CmriState {
+    pub fn state(&self) -> CmriState {
         self.state
     }
 
