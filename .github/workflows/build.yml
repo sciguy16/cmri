@@ -17,6 +17,12 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
+      - name: Run cargo fmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
       - name: Run cargo clippy
         uses: actions-rs/cargo@v1
         with:
