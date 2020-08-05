@@ -12,19 +12,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Build
-      run: cargo build --verbose
+      - uses: actions/checkout@v2
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v1
+      - name: Build
+        run: cargo build --verbose
 
       - name: Run cargo clippy
         uses: actions-rs/cargo@v1
         with:
           command: clippy
           args: -- -D warnings
+
+      - name: Run unit tests
+        run: cargo test
