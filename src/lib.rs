@@ -144,6 +144,12 @@ impl CmriStateMachine {
     }
 }
 
+impl Default for CmriStateMachine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
