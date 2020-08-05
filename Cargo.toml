@@ -1,11 +1,17 @@
 [package]
-name = "ip_to_485"
-version = "0.1.0"
-authors = ["pi"]
+name = "cmri"
+version = "0.2.0"
+authors = ["David Young"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "Implementation of C/MRI"
+readme = "README.md"
+license = "GPL-3-or-later"
+repository = "https://github.com/sciguy16/cmri"
+keywords = ["CMRI", "Railway", "Railroad", "RS485"]
+categories = ["embedded", "no-std", "science::robotics"]
 
 [dependencies]
-rppal = "0.11"
 crossbeam-channel = "0.4.2"
+
+[dev-dependencies]
+rppal = "0.11"
