@@ -81,7 +81,7 @@ impl CmriMessage {
     /// Empty the rx buffer
     fn clear(&mut self) {
         self.len = 0;
-        self.payload = [0_u8; MAX_PAYLOAD_LEN];
+        self.payload.iter_mut().for_each(|x| *x = 0);
     }
 
     /// Encode the message into a transmit buffer
