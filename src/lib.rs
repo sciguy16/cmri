@@ -6,7 +6,9 @@ mod error;
 
 /// This is the length calculated from
 /// https://github.com/madleech/ArduinoCMRI/blob/master/CMRI.h
-const RX_BUFFER_LEN: usize = 258;
+/// (64 i/o cards @ 32 bits each + packet type and address bytes)
+//const RX_BUFFER_LEN: usize = 258;
+const MAX_PAYLOAD_LEN: usize = 256;
 
 const CMRI_PREAMBLE_BYTE: u8 = 0xff;
 const CMRI_START_BYTE: u8 = 0x02;
@@ -34,19 +36,52 @@ pub enum RxState {
 /// Main state machine, including decoding logic
 pub struct CmriStateMachine {
     state: CmriState,
-    payload: [u8; RX_BUFFER_LEN],
-    position: usize,
+    message: CmriMessage,
     /// If set, decoding will only accept messages directed at this
     /// address and discard all others
     address_filter: Option<u8>,
+}
+
+pub struct CmriMessage {
+    address: u8,
+    message_type: u8,
+    payload: [u8; MAX_PAYLOAD_LEN],
+    position: usize,
+}
+
+impl CmriMessage {
+    pub fn new() -> Self {
+        Self {
+            address: 0,
+            message_type: 0,
+            payload: [0; MAX_PAYLOAD_LEN],
+            position: 0,
+        }
+    }
+
+    /// Push a byte onto the payload
+    fn push(&mut self, byte: u8) -> Result<()> {
+        if self.position == MAX_PAYLOAD_LEN {
+            // Buffer is full, which is problematic
+            return Err(Error::OutOfBounds);
+        }
+        self.payload[self.position] = byte;
+        self.position += 1;
+        Ok(())
+    }
+
+    /// Empty the rx buffer
+    fn clear(&mut self) {
+        self.position = 0;
+        self.payload = [0_u8; MAX_PAYLOAD_LEN];
+    }
 }
 
 impl CmriStateMachine {
     pub fn new() -> Self {
         Self {
             state: CmriState::Idle,
-            payload: [0_u8; RX_BUFFER_LEN],
-            position: 0,
+            message: CmriMessage::new(),
             address_filter: None,
         }
     }
@@ -62,21 +97,8 @@ impl CmriStateMachine {
         self.address_filter = Some(addr);
     }
 
-    /// Push a byte onto the rx buffer
-    fn push(&mut self, byte: u8) -> Result<()> {
-        if self.position == RX_BUFFER_LEN {
-            // Buffer is full, which is problematic
-            return Err(Error::OutOfBounds);
-        }
-        self.payload[self.position] = byte;
-        self.position += 1;
-        Ok(())
-    }
-
-    /// Empty the rx buffer
-    fn clear(&mut self) {
-        self.position = 0;
-        self.payload = [0_u8; RX_BUFFER_LEN];
+    pub fn clear(&mut self) {
+        self.message.clear();
         self.state = CmriState::Idle;
     }
 
@@ -89,7 +111,6 @@ impl CmriStateMachine {
                 // Idle to Attn if byte is PREAMBLE
                 if byte == CMRI_PREAMBLE_BYTE {
                     self.clear();
-                    self.push(byte)?;
                     self.state = Attn;
                 }
                 // Ignore other bytes while Idle
@@ -97,7 +118,6 @@ impl CmriStateMachine {
             Attn => {
                 // Attn to Start if byte is PREAMBLE
                 if byte == CMRI_PREAMBLE_BYTE {
-                    self.push(byte)?;
                     self.state = Start;
                 } else {
                     // Otherwise discard and reset to Idle
@@ -107,7 +127,6 @@ impl CmriStateMachine {
             Start => {
                 // start byte must be valid
                 if byte == CMRI_START_BYTE {
-                    self.push(byte)?;
                     self.state = Addr;
                 } else {
                     // Otherwise discard and reset to Idle
@@ -125,12 +144,12 @@ impl CmriStateMachine {
                     }
                 }
 
-                self.push(byte)?;
+                self.message.address = byte;
                 self.state = Type;
             }
             Type => {
                 // Take the next byte as-is for message type
-                self.push(byte)?;
+                self.message.message_type = byte;
                 self.state = Data;
             }
             Data => {
@@ -143,19 +162,18 @@ impl CmriStateMachine {
                     }
                     CMRI_STOP_BYTE => {
                         // end transmission
-                        self.push(byte)?;
                         self.state = Idle;
                         return Ok(RxState::Complete);
                     }
                     _ => {
                         // any other byte we take as data
-                        self.push(byte)?;
+                        self.message.push(byte)?;
                     }
                 }
             }
             Escape => {
                 // Escape the next byte, so accept it as data.
-                self.push(byte)?;
+                self.message.push(byte)?;
                 self.state = Data;
             }
         }
@@ -164,6 +182,11 @@ impl CmriStateMachine {
 }
 
 impl Default for CmriStateMachine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl Default for CmriMessage {
     fn default() -> Self {
         Self::new()
     }
@@ -180,8 +203,8 @@ mod test {
     fn basic_create_state_machine() {
         let s = CmriStateMachine::new();
         assert_eq!(s.state(), CmriState::Idle);
-        assert_eq!(s.payload.len(), RX_BUFFER_LEN);
-        assert_eq!(s.position, 0);
+        assert_eq!(s.message.payload.len(), MAX_PAYLOAD_LEN);
+        assert_eq!(s.message.position, 0);
     }
 
     #[test]
@@ -198,16 +221,15 @@ mod test {
         assert_eq!(res, Listening);
 
         // Make sure the buffer hasn't recorded any of this
-        assert_eq!(s.position, 0);
-        assert_eq!(s.payload[0], 0);
+        assert_eq!(s.message.position, 0);
+        assert_eq!(s.message.payload[0], 0);
         assert_eq!(s.state, Idle);
 
         // Send a preamble byte and check that the state has changed to Attn
         let res = s.process(CMRI_PREAMBLE_BYTE).unwrap();
         assert_eq!(res, Listening);
         assert_eq!(s.state, Attn);
-        assert_eq!(s.payload[0], 0xff);
-        assert_eq!(s.position, 1);
+        assert_eq!(s.message.position, 0); // preamble does not get saved
     }
 
     #[test]
@@ -257,11 +279,10 @@ mod test {
         assert_eq!(s.state, Start);
 
         // Send junk instead of a start byte
-        assert_eq!(s.position, 2);
         let res = s.process(0x32);
         assert_eq!(res, Ok(Listening));
         assert_eq!(s.state, Idle);
-        assert_eq!(s.position, 0);
+        assert_eq!(s.message.position, 0);
     }
 
     // Skip Addr and Type because they can each be any byte
@@ -275,32 +296,32 @@ mod test {
         assert_eq!(s.state, Data);
 
         // Escape byte, should not advance the position
-        let pos = s.position;
+        let pos = s.message.position;
         let res = s.process(CMRI_ESCAPE_BYTE);
         assert_eq!(res, Ok(Listening));
         assert_eq!(s.state, Escape);
-        assert_eq!(s.position, pos);
+        assert_eq!(s.message.position, pos);
 
         // Send an escape byte again, should be escaped and state back
         // to accepting data
         let res = s.process(CMRI_ESCAPE_BYTE);
         assert_eq!(res, Ok(Listening));
         assert_eq!(s.state, Data);
-        assert_eq!(s.position, pos + 1);
+        assert_eq!(s.message.position, pos + 1);
 
         // Escape byte, should not advance the position
-        let pos = s.position;
+        let pos = s.message.position;
         let res = s.process(CMRI_ESCAPE_BYTE);
         assert_eq!(res, Ok(Listening));
         assert_eq!(s.state, Escape);
-        assert_eq!(s.position, pos);
+        assert_eq!(s.message.position, pos);
 
         // Send a stop byte, should be escaped and state back
         // to accepting data
         let res = s.process(CMRI_STOP_BYTE);
         assert_eq!(res, Ok(Listening));
         assert_eq!(s.state, Data);
-        assert_eq!(s.position, pos + 1);
+        assert_eq!(s.message.position, pos + 1);
     }
 
     #[test]
@@ -349,7 +370,7 @@ mod test {
         let res = s.process(0x65);
         assert_eq!(res, Ok(Listening));
         assert_eq!(s.state, Idle);
-        assert_eq!(s.position, 0);
+        assert_eq!(s.message.position, 0);
     }
 
     #[test]
@@ -359,11 +380,11 @@ mod test {
         // Cheekily force the buffer to be "full"
         // Note that this is not possible for a library user because the
         // `position` member variable is private
-        s.position = RX_BUFFER_LEN - 3;
-        s.push(3).unwrap();
-        s.push(2).unwrap();
-        s.push(1).unwrap();
-        let res = s.push(0);
+        s.message.position = MAX_PAYLOAD_LEN - 3;
+        s.message.push(3).unwrap();
+        s.message.push(2).unwrap();
+        s.message.push(1).unwrap();
+        let res = s.message.push(0);
         assert_eq!(res, Err(Error::OutOfBounds));
     }
 
