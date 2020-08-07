@@ -3,7 +3,7 @@
 use core::convert::TryFrom;
 pub use error::{Error, Result};
 
-mod error;
+pub mod error;
 
 /// This is the length calculated from
 /// https://github.com/madleech/ArduinoCMRI/blob/master/CMRI.h
@@ -62,6 +62,15 @@ impl TryFrom<u8> for MessageType {
     }
 }
 
+impl core::fmt::Display for MessageType {
+    fn fmt(
+        &self,
+        fmt: &mut core::fmt::Formatter<'_>,
+    ) -> core::result::Result<(), core::fmt::Error> {
+        write!(fmt, "{:?}", self)
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum RxState {
     Listening,
@@ -78,10 +87,10 @@ pub struct CmriStateMachine {
 }
 
 pub struct CmriMessage {
-    address: Option<u8>,
-    message_type: Option<MessageType>,
-    payload: [u8; MAX_PAYLOAD_LEN],
-    len: usize,
+    pub address: Option<u8>,
+    pub message_type: Option<MessageType>,
+    pub payload: [u8; MAX_PAYLOAD_LEN],
+    pub len: usize,
 }
 
 impl CmriMessage {

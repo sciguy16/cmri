@@ -8,3 +8,12 @@ pub enum Error {
     MissingType,
     InvalidMessageType,
 }
+
+impl core::fmt::Display for Error {
+    fn fmt(
+        &self,
+        fmt: &mut core::fmt::Formatter<'_>,
+    ) -> core::result::Result<(), core::fmt::Error> {
+        write!(fmt, "{:?}", self)
+    }
+}
