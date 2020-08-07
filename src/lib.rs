@@ -46,7 +46,7 @@ pub struct CmriMessage {
     address: u8,
     message_type: u8,
     payload: [u8; MAX_PAYLOAD_LEN],
-    position: usize,
+    len: usize,
 }
 
 impl CmriMessage {
@@ -55,24 +55,24 @@ impl CmriMessage {
             address: 0,
             message_type: 0,
             payload: [0; MAX_PAYLOAD_LEN],
-            position: 0,
+            len: 0,
         }
     }
 
     /// Push a byte onto the payload
     fn push(&mut self, byte: u8) -> Result<()> {
-        if self.position == MAX_PAYLOAD_LEN {
+        if self.len == MAX_PAYLOAD_LEN {
             // Buffer is full, which is problematic
             return Err(Error::OutOfBounds);
         }
-        self.payload[self.position] = byte;
-        self.position += 1;
+        self.payload[self.len] = byte;
+        self.len += 1;
         Ok(())
     }
 
     /// Empty the rx buffer
     fn clear(&mut self) {
-        self.position = 0;
+        self.len = 0;
         self.payload = [0_u8; MAX_PAYLOAD_LEN];
     }
 }
@@ -95,6 +95,11 @@ impl CmriStateMachine {
     /// accept messages targeted at us
     pub fn filter(&mut self, addr: u8) {
         self.address_filter = Some(addr);
+    }
+
+    /// Gets a reference to the decoded message
+    pub fn message(&self) -> &CmriMessage {
+        &self.message
     }
 
     pub fn clear(&mut self) {
@@ -204,7 +209,7 @@ mod test {
         let s = CmriStateMachine::new();
         assert_eq!(s.state(), CmriState::Idle);
         assert_eq!(s.message.payload.len(), MAX_PAYLOAD_LEN);
-        assert_eq!(s.message.position, 0);
+        assert_eq!(s.message.len, 0);
     }
 
     #[test]
@@ -221,7 +226,7 @@ mod test {
         assert_eq!(res, Listening);
 
         // Make sure the buffer hasn't recorded any of this
-        assert_eq!(s.message.position, 0);
+        assert_eq!(s.message.len, 0);
         assert_eq!(s.message.payload[0], 0);
         assert_eq!(s.state, Idle);
 
@@ -229,7 +234,7 @@ mod test {
         let res = s.process(CMRI_PREAMBLE_BYTE).unwrap();
         assert_eq!(res, Listening);
         assert_eq!(s.state, Attn);
-        assert_eq!(s.message.position, 0); // preamble does not get saved
+        assert_eq!(s.message.len, 0); // preamble does not get saved
     }
 
     #[test]
@@ -282,7 +287,7 @@ mod test {
         let res = s.process(0x32);
         assert_eq!(res, Ok(Listening));
         assert_eq!(s.state, Idle);
-        assert_eq!(s.message.position, 0);
+        assert_eq!(s.message.len, 0);
     }
 
     // Skip Addr and Type because they can each be any byte
@@ -296,32 +301,32 @@ mod test {
         assert_eq!(s.state, Data);
 
         // Escape byte, should not advance the position
-        let pos = s.message.position;
+        let pos = s.message.len;
         let res = s.process(CMRI_ESCAPE_BYTE);
         assert_eq!(res, Ok(Listening));
         assert_eq!(s.state, Escape);
-        assert_eq!(s.message.position, pos);
+        assert_eq!(s.message.len, pos);
 
         // Send an escape byte again, should be escaped and state back
         // to accepting data
         let res = s.process(CMRI_ESCAPE_BYTE);
         assert_eq!(res, Ok(Listening));
         assert_eq!(s.state, Data);
-        assert_eq!(s.message.position, pos + 1);
+        assert_eq!(s.message.len, pos + 1);
 
         // Escape byte, should not advance the position
-        let pos = s.message.position;
+        let pos = s.message.len;
         let res = s.process(CMRI_ESCAPE_BYTE);
         assert_eq!(res, Ok(Listening));
         assert_eq!(s.state, Escape);
-        assert_eq!(s.message.position, pos);
+        assert_eq!(s.message.len, pos);
 
         // Send a stop byte, should be escaped and state back
         // to accepting data
         let res = s.process(CMRI_STOP_BYTE);
         assert_eq!(res, Ok(Listening));
         assert_eq!(s.state, Data);
-        assert_eq!(s.message.position, pos + 1);
+        assert_eq!(s.message.len, pos + 1);
     }
 
     #[test]
@@ -370,7 +375,67 @@ mod test {
         let res = s.process(0x65);
         assert_eq!(res, Ok(Listening));
         assert_eq!(s.state, Idle);
-        assert_eq!(s.message.position, 0);
+        assert_eq!(s.message.len, 0);
+    }
+
+    #[test]
+    fn decode_full_message() {
+        #[rustfmt::skip]
+        let message = [
+            CMRI_PREAMBLE_BYTE,
+            CMRI_PREAMBLE_BYTE,
+            CMRI_START_BYTE,
+            0x86, // Address
+            0x12, // Type
+            0x41, 0x41, 0x41, 0x41, // Message
+            CMRI_STOP_BYTE,
+        ];
+
+        #[rustfmt::skip]
+        let message2 = [
+            CMRI_PREAMBLE_BYTE,
+            CMRI_PREAMBLE_BYTE,
+            CMRI_START_BYTE,
+            0xa2, // Address
+            0x12, // Type
+            0x41, 0x41, 0x41, 0x41, // Message
+            CMRI_STOP_BYTE,
+        ];
+
+        let mut s = CmriStateMachine::new();
+
+        // Decode the message
+        for byte in message.iter() {
+            s.process(*byte).unwrap();
+        }
+
+        let m = s.message();
+        assert_eq!(m.address, 0x86);
+        assert_eq!(m.message_type, 0x12);
+        assert_eq!(m.payload[..(m.len)], [0x41, 0x41, 0x41, 0x41]);
+
+        // Enable a filter
+        s.filter(0x86);
+        // Decode the message, excluding final stop byte
+        for byte in message[..message.len() - 1].iter() {
+            s.process(*byte).unwrap();
+        }
+        // Decode the final stop byte, capturing the response code
+        let res = s.process(message[message.len() - 1]);
+        assert_eq!(res, Ok(Complete));
+
+        let m = s.message();
+        assert_eq!(m.address, 0x86);
+        assert_eq!(m.message_type, 0x12);
+        assert_eq!(m.payload[..(m.len)], [0x41, 0x41, 0x41, 0x41]);
+
+        // Decode the message
+        for byte in message2.iter() {
+            s.process(*byte).unwrap();
+        }
+
+        let m = s.message();
+        assert_eq!(m.len, 0);
     }
 
     #[test]
@@ -380,7 +445,7 @@ mod test {
         // Cheekily force the buffer to be "full"
         // Note that this is not possible for a library user because the
         // `position` member variable is private
-        s.message.position = MAX_PAYLOAD_LEN - 3;
+        s.message.len = MAX_PAYLOAD_LEN - 3;
         s.message.push(3).unwrap();
         s.message.push(2).unwrap();
         s.message.push(1).unwrap();
