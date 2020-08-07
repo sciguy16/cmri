@@ -107,6 +107,7 @@ impl CmriStateMachine {
             }
             Addr => {
                 // Take the next byte as-is for an address
+                //TODO implement address filter
                 self.push(byte)?;
                 self.state = Type;
             }
@@ -118,8 +119,9 @@ impl CmriStateMachine {
             Data => {
                 match byte {
                     CMRI_ESCAPE_BYTE => {
-                        // escape the next byte
-                        self.push(byte)?;
+                        // escape the next byte; do not push the escape
+                        // byte
+                        //self.push(byte)?;
                         self.state = Escape;
                     }
                     CMRI_STOP_BYTE => {
@@ -154,6 +156,9 @@ impl Default for CmriStateMachine {
 mod test {
     use super::*;
 
+    use CmriState::*;
+    use RxState::*;
+
     #[test]
     fn basic_create_state_machine() {
         let s = CmriStateMachine::new();
@@ -164,9 +169,6 @@ mod test {
 
     #[test]
     fn decode_first_preamble() {
-        use CmriState::*;
-        use RxState::*;
-
         // Create a state machine
         let mut s = CmriStateMachine::new();
 
@@ -193,9 +195,6 @@ mod test {
 
     #[test]
     fn decode_second_preamble() {
-        use CmriState::*;
-        use RxState::*;
-
         // Create a state machine and send two preamble bytes
         let mut s = CmriStateMachine::new();
         let res = s.process(CMRI_PREAMBLE_BYTE);
@@ -216,6 +215,93 @@ mod test {
     }
 
     #[test]
+    fn decode_start_byte() {
+        // Create a state machine and send two preamble bytes
+        let mut s = CmriStateMachine::new();
+        let res = s.process(CMRI_PREAMBLE_BYTE);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Attn);
+        let res = s.process(CMRI_PREAMBLE_BYTE);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Start);
+
+        // Send a start byte and check that we're in address mode
+        let res = s.process(CMRI_START_BYTE);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Addr);
+
+        // Create a state machine and send two preamble bytes
+        let mut s = CmriStateMachine::new();
+        let res = s.process(CMRI_PREAMBLE_BYTE);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Attn);
+        let res = s.process(CMRI_PREAMBLE_BYTE);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Start);
+
+        // Send junk instead of a start byte
+        assert_eq!(s.position, 2);
+        let res = s.process(0x32);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Idle);
+        assert_eq!(s.position, 0);
+    }
+
+    // Skip Addr and Type because they can each be any byte
+
+    #[test]
+    fn decode_escape_byte() {
+        let mut s = get_to_data_section().unwrap();
+        // Normal message byte
+        let res = s.process(5);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Data);
+
+        // Escape byte, should not advance the position
+        let pos = s.position;
+        let res = s.process(CMRI_ESCAPE_BYTE);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Escape);
+        assert_eq!(s.position, pos);
+
+        // Send an escape byte again, should be escaped and state back
+        // to accepting data
+        let res = s.process(CMRI_ESCAPE_BYTE);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Data);
+        assert_eq!(s.position, pos + 1);
+
+        // Escape byte, should not advance the position
+        let pos = s.position;
+        let res = s.process(CMRI_ESCAPE_BYTE);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Escape);
+        assert_eq!(s.position, pos);
+
+        // Send a stop byte, should be escaped and state back
+        // to accepting data
+        let res = s.process(CMRI_STOP_BYTE);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Data);
+        assert_eq!(s.position, pos + 1);
+    }
+
+    #[test]
+    fn decode_stop_byte() {
+        let mut s = get_to_data_section().unwrap();
+
+        // Normal message byte
+        let res = s.process(5);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Data);
+
+        // Stop byte, should trigger the end of message stuff
+        let res = s.process(CMRI_STOP_BYTE);
+        assert_eq!(res, Ok(Complete));
+        assert_eq!(s.state, Idle);
+    }
+
+    #[test]
     fn buffer_overrun() {
         let mut s = CmriStateMachine::new();
 
@@ -228,5 +314,18 @@ mod test {
         s.push(1).unwrap();
         let res = s.push(0);
         assert_eq!(res, Err(Error::OutOfBounds));
+    }
+
+    /// Utility function to produce a state machine in the "accepting
+    /// data" state to make testing later states easier
+    fn get_to_data_section() -> Result<CmriStateMachine> {
+        let mut s = CmriStateMachine::new();
+        s.process(CMRI_PREAMBLE_BYTE)?;
+        s.process(CMRI_PREAMBLE_BYTE)?;
+        s.process(CMRI_START_BYTE)?;
+        s.process(0x43)?; // Address
+        s.process(0x65)?; // Message type
+
+        Ok(s)
     }
 }
