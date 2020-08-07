@@ -1,5 +1,6 @@
 #![no_std]
 
+use core::convert::TryFrom;
 pub use error::{Error, Result};
 
 mod error;
@@ -36,6 +37,32 @@ pub enum CmriState {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
+pub enum MessageType {
+    /// Initialisation
+    Init = 'I' as isize,
+    /// Controller -> Node
+    Set = 'T' as isize,
+    /// Node -> Controller
+    Get = 'R' as isize,
+    /// Controller requests status from node
+    Poll = 'P' as isize,
+}
+
+impl TryFrom<u8> for MessageType {
+    type Error = Error;
+    fn try_from(t: u8) -> Result<Self> {
+        use MessageType::*;
+        match t as char {
+            'I' => Ok(Init),
+            'T' => Ok(Set),
+            'R' => Ok(Get),
+            'P' => Ok(Poll),
+            _ => Err(Error::InvalidMessageType),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum RxState {
     Listening,
     Complete,
@@ -51,8 +78,8 @@ pub struct CmriStateMachine {
 }
 
 pub struct CmriMessage {
-    address: u8,
-    message_type: u8,
+    address: Option<u8>,
+    message_type: Option<MessageType>,
     payload: [u8; MAX_PAYLOAD_LEN],
     len: usize,
 }
@@ -60,8 +87,8 @@ pub struct CmriMessage {
 impl CmriMessage {
     pub fn new() -> Self {
         Self {
-            address: 0,
-            message_type: 0,
+            address: None,
+            message_type: None,
             payload: [0; MAX_PAYLOAD_LEN],
             len: 0,
         }
@@ -85,7 +112,7 @@ impl CmriMessage {
     }
 
     /// Encode the message into a transmit buffer
-    pub fn encode(self, buf: &mut [u8; TX_BUFFER_LEN]) {
+    pub fn encode(self, buf: &mut [u8; TX_BUFFER_LEN]) -> Result<()> {
         let mut pos: usize = 0;
 
         // Two PREAMBLEs
@@ -99,11 +126,11 @@ impl CmriMessage {
         pos += 1;
 
         // One ADDRESS
-        buf[pos] = self.address;
+        buf[pos] = self.address.ok_or(Error::MissingAddress)?;
         pos += 1;
 
         // One TYPE
-        buf[pos] = self.message_type;
+        buf[pos] = self.message_type.ok_or(Error::MissingType)? as u8;
         pos += 1;
 
         // Insert the PAYLOAD
@@ -120,6 +147,8 @@ impl CmriMessage {
         // One STOP
         buf[pos] = CMRI_STOP_BYTE;
         //pos += 1;
+
+        Ok(())
     }
 }
 
@@ -195,13 +224,18 @@ impl CmriStateMachine {
                     }
                 }
 
-                self.message.address = byte;
+                self.message.address = Some(byte);
                 self.state = Type;
             }
             Type => {
-                // Take the next byte as-is for message type
-                self.message.message_type = byte;
-                self.state = Data;
+                // Decode the message type and reset if it is invalid
+                if let Ok(mtype) = MessageType::try_from(byte) {
+                    self.message.message_type = Some(mtype);
+                    self.state = Data;
+                } else {
+                    // Invalid message type; reset
+                    self.clear();
+                }
             }
             Data => {
                 match byte {
@@ -268,6 +302,7 @@ mod test {
     use super::*;
 
     use CmriState::*;
+    use MessageType::*;
     use RxState::*;
 
     #[test]
@@ -452,7 +487,7 @@ mod test {
             CMRI_PREAMBLE_BYTE,
             CMRI_START_BYTE,
             0x86, // Address
-            0x12, // Type
+            Init as u8, // Type
             0x41, 0x41, 0x41, 0x41, // Message
             CMRI_STOP_BYTE,
         ];
@@ -463,7 +498,7 @@ mod test {
             CMRI_PREAMBLE_BYTE,
             CMRI_START_BYTE,
             0xa2, // Address
-            0x12, // Type
+            Init as u8, // Type
             0x41, 0x41, 0x41, 0x41, // Message
             CMRI_STOP_BYTE,
         ];
@@ -476,8 +511,8 @@ mod test {
         }
 
         let m = s.message();
-        assert_eq!(m.address, 0x86);
-        assert_eq!(m.message_type, 0x12);
+        assert_eq!(m.address, Some(0x86));
+        assert_eq!(m.message_type, Some(Init));
         assert_eq!(m.payload[..(m.len)], [0x41, 0x41, 0x41, 0x41]);
 
         // Enable a filter
@@ -491,8 +526,8 @@ mod test {
         assert_eq!(res, Ok(Complete));
 
         let m = s.message();
-        assert_eq!(m.address, 0x86);
-        assert_eq!(m.message_type, 0x12);
+        assert_eq!(m.address, Some(0x86));
+        assert_eq!(m.message_type, Some(Init));
         assert_eq!(m.payload[..(m.len)], [0x41, 0x41, 0x41, 0x41]);
 
         // Decode the message
@@ -524,14 +559,14 @@ mod test {
         let mut payload_buffer = [0_u8; MAX_PAYLOAD_LEN];
         payload_from_slice(&mut payload_buffer, &[0x41, 0x41, 0x43]).unwrap();
         let m = CmriMessage {
-            address: 0x58,
-            message_type: 0x31,
+            address: Some(0x58),
+            message_type: Some(Set),
             payload: payload_buffer,
             len: 3,
         };
 
         let mut tx_buffer = [0_u8; TX_BUFFER_LEN];
-        m.encode(&mut tx_buffer);
+        m.encode(&mut tx_buffer).unwrap();
 
         assert_eq!(
             tx_buffer[..9],
@@ -539,8 +574,8 @@ mod test {
                 CMRI_PREAMBLE_BYTE,
                 CMRI_PREAMBLE_BYTE,
                 CMRI_START_BYTE,
-                0x58, // Address
-                0x31, // Type
+                0x58,      // Address
+                Set as u8, // Type
                 0x41,
                 0x41,
                 0x43,
@@ -576,7 +611,7 @@ mod test {
         s.process(CMRI_PREAMBLE_BYTE)?;
         s.process(CMRI_START_BYTE)?;
         s.process(addr)?; // Address
-        s.process(0x65)?; // Message type
+        s.process(Init as u8)?; // Message type
 
         Ok(s)
     }
