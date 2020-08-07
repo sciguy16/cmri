@@ -9,6 +9,14 @@ mod error;
 /// (64 i/o cards @ 32 bits each + packet type and address bytes)
 //const RX_BUFFER_LEN: usize = 258;
 const MAX_PAYLOAD_LEN: usize = 256;
+/// * Payload is MAX_PAYLOAD_LEN
+/// * Headers are 2x PREAMBLE and a START: 3
+/// * Address and type: 2
+/// * Trailers are 1x STOP: 1
+/// * Then some unknown number of escape bytes, up to MAX_PAYLOAD_LEN
+/// Implementations may be be able to get away with a smaller buffer if
+/// memory is highly constrained
+const TX_BUFFER_LEN: usize = 2 * MAX_PAYLOAD_LEN + 3 + 2 + 1;
 
 const CMRI_PREAMBLE_BYTE: u8 = 0xff;
 const CMRI_START_BYTE: u8 = 0x02;
@@ -74,6 +82,44 @@ impl CmriMessage {
     fn clear(&mut self) {
         self.len = 0;
         self.payload = [0_u8; MAX_PAYLOAD_LEN];
+    }
+
+    /// Encode the message into a transmit buffer
+    pub fn encode(self, buf: &mut [u8; TX_BUFFER_LEN]) {
+        let mut pos: usize = 0;
+
+        // Two PREAMBLEs
+        buf[pos] = CMRI_PREAMBLE_BYTE;
+        pos += 1;
+        buf[pos] = CMRI_PREAMBLE_BYTE;
+        pos += 1;
+
+        // One START
+        buf[pos] = CMRI_START_BYTE;
+        pos += 1;
+
+        // One ADDRESS
+        buf[pos] = self.address;
+        pos += 1;
+
+        // One TYPE
+        buf[pos] = self.message_type;
+        pos += 1;
+
+        // Insert the PAYLOAD
+        for payload_byte in self.payload[..self.len].iter() {
+            if needs_escape(*payload_byte) {
+                buf[pos] = CMRI_ESCAPE_BYTE;
+                pos += 1;
+            }
+
+            buf[pos] = *payload_byte;
+            pos += 1;
+        }
+
+        // One STOP
+        buf[pos] = CMRI_STOP_BYTE;
+        //pos += 1;
     }
 }
 
@@ -195,6 +241,26 @@ impl Default for CmriMessage {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Returns TRUE if the byte is one which needs escaping; currently only
+/// STOP and ESCAPE
+fn needs_escape(byte: u8) -> bool {
+    byte == CMRI_STOP_BYTE || byte == CMRI_ESCAPE_BYTE
+}
+
+/// Takes a slice and embeds it in a payload array
+pub fn payload_from_slice(
+    payload_buffer: &mut [u8; MAX_PAYLOAD_LEN],
+    input_payload: &[u8],
+) -> Result<()> {
+    if input_payload.len() > MAX_PAYLOAD_LEN {
+        return Err(Error::DataTooLong);
+    }
+    for (src, dst) in input_payload.iter().zip(payload_buffer.iter_mut()) {
+        *dst = *src;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -451,6 +517,55 @@ mod test {
         s.message.push(1).unwrap();
         let res = s.message.push(0);
         assert_eq!(res, Err(Error::OutOfBounds));
+    }
+
+    #[test]
+    fn encode_a_message() {
+        let mut payload_buffer = [0_u8; MAX_PAYLOAD_LEN];
+        payload_from_slice(&mut payload_buffer, &[0x41, 0x41, 0x43]).unwrap();
+        let m = CmriMessage {
+            address: 0x58,
+            message_type: 0x31,
+            payload: payload_buffer,
+            len: 3,
+        };
+
+        let mut tx_buffer = [0_u8; TX_BUFFER_LEN];
+        m.encode(&mut tx_buffer);
+
+        assert_eq!(
+            tx_buffer[..9],
+            [
+                CMRI_PREAMBLE_BYTE,
+                CMRI_PREAMBLE_BYTE,
+                CMRI_START_BYTE,
+                0x58, // Address
+                0x31, // Type
+                0x41,
+                0x41,
+                0x43,
+                CMRI_STOP_BYTE,
+            ]
+        );
+    }
+
+    #[test]
+    fn encode_a_worst_case_message() {}
+
+    #[test]
+    fn test_payload_from_slice() {
+        let mut payload_buffer = [0_u8; MAX_PAYLOAD_LEN];
+        let input = [1_u8, 2, 3];
+
+        // Test a valid input
+        payload_from_slice(&mut payload_buffer, &input).unwrap();
+        assert_eq!(payload_buffer[..input.len()], input);
+        assert_eq!(payload_buffer[input.len()], 0);
+
+        // Test a too-long input
+        let input = [5_u8; MAX_PAYLOAD_LEN + 1];
+        let res = payload_from_slice(&mut payload_buffer, &input);
+        assert_eq!(res, Err(Error::DataTooLong));
     }
 
     /// Utility function to produce a state machine in the "accepting
