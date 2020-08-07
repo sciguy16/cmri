@@ -7,6 +7,7 @@ pub enum Error {
     MissingAddress,
     MissingType,
     InvalidMessageType,
+    InvalidNodeType,
 }
 
 impl core::fmt::Display for Error {

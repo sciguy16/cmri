@@ -2,14 +2,16 @@
 
 use core::convert::TryFrom;
 pub use error::{Error, Result};
+pub use node_types::*;
 
 pub mod error;
+pub mod node_types;
 
 /// This is the length calculated from
 /// https://github.com/madleech/ArduinoCMRI/blob/master/CMRI.h
 /// (64 i/o cards @ 32 bits each + packet type and address bytes)
 //const RX_BUFFER_LEN: usize = 258;
-const MAX_PAYLOAD_LEN: usize = 256;
+pub const MAX_PAYLOAD_LEN: usize = 256;
 /// * Payload is MAX_PAYLOAD_LEN
 /// * Headers are 2x PREAMBLE and a START: 3
 /// * Address and type: 2
@@ -17,7 +19,7 @@ const MAX_PAYLOAD_LEN: usize = 256;
 /// * Then some unknown number of escape bytes, up to MAX_PAYLOAD_LEN
 /// Implementations may be be able to get away with a smaller buffer if
 /// memory is highly constrained
-const TX_BUFFER_LEN: usize = 2 * MAX_PAYLOAD_LEN + 3 + 2 + 1;
+pub const TX_BUFFER_LEN: usize = 2 * MAX_PAYLOAD_LEN + 3 + 2 + 1;
 
 const CMRI_PREAMBLE_BYTE: u8 = 0xff;
 const CMRI_START_BYTE: u8 = 0x02;
