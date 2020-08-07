@@ -1,6 +1,6 @@
 # cmri_ip_to_485
 
-![Build](https://github.com/sciguy16/cmri_ip_to_485/workflows/Build/badge.svg?branch=master)
+![Build](https://github.com/sciguy16/cmri_ip_to_485/workflows/Build/badge.svg?branch=main)
 
 Userland service that runs on a Raspberry Pi and acts as a proxy between JMRI on TCP and a C/MRI network running over RS485. The need for this came about because half-duplex RS485 requires a control signal to toggle the transceiver between transmit and receive mode, which was proving difficult to achieve otherwise.
 
