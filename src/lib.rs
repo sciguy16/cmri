@@ -36,6 +36,9 @@ pub struct CmriStateMachine {
     state: CmriState,
     payload: [u8; RX_BUFFER_LEN],
     position: usize,
+    /// If set, decoding will only accept messages directed at this
+    /// address and discard all others
+    address_filter: Option<u8>,
 }
 
 impl CmriStateMachine {
@@ -44,12 +47,19 @@ impl CmriStateMachine {
             state: CmriState::Idle,
             payload: [0_u8; RX_BUFFER_LEN],
             position: 0,
+            address_filter: None,
         }
     }
 
     /// Returns the current state of the system
     pub fn state(&self) -> CmriState {
         self.state
+    }
+
+    /// Sets an address filter so that the state machine will only
+    /// accept messages targeted at us
+    pub fn filter(&mut self, addr: u8) {
+        self.address_filter = Some(addr);
     }
 
     /// Push a byte onto the rx buffer
@@ -67,6 +77,7 @@ impl CmriStateMachine {
     fn clear(&mut self) {
         self.position = 0;
         self.payload = [0_u8; RX_BUFFER_LEN];
+        self.state = CmriState::Idle;
     }
 
     /// Main process function. Takes in bytes off the wire and builds up
@@ -91,7 +102,6 @@ impl CmriStateMachine {
                 } else {
                     // Otherwise discard and reset to Idle
                     self.clear();
-                    self.state = Idle;
                 }
             }
             Start => {
@@ -102,12 +112,19 @@ impl CmriStateMachine {
                 } else {
                     // Otherwise discard and reset to Idle
                     self.clear();
-                    self.state = Idle;
                 }
             }
             Addr => {
                 // Take the next byte as-is for an address
-                //TODO implement address filter
+                if let Some(addr) = self.address_filter {
+                    // A filter has been defined
+                    if addr != byte {
+                        // Not our address, discard the message
+                        self.clear();
+                        return Ok(RxState::Listening);
+                    }
+                }
+
                 self.push(byte)?;
                 self.state = Type;
             }
@@ -251,7 +268,7 @@ mod test {
 
     #[test]
     fn decode_escape_byte() {
-        let mut s = get_to_data_section().unwrap();
+        let mut s = get_to_data_section(0x43).unwrap();
         // Normal message byte
         let res = s.process(5);
         assert_eq!(res, Ok(Listening));
@@ -288,7 +305,7 @@ mod test {
 
     #[test]
     fn decode_stop_byte() {
-        let mut s = get_to_data_section().unwrap();
+        let mut s = get_to_data_section(0x05).unwrap();
 
         // Normal message byte
         let res = s.process(5);
@@ -299,6 +316,40 @@ mod test {
         let res = s.process(CMRI_STOP_BYTE);
         assert_eq!(res, Ok(Complete));
         assert_eq!(s.state, Idle);
+    }
+
+    #[test]
+    fn address_filter() {
+        // Initial check to see that no-filter works
+        let s = get_to_data_section(0x06).unwrap();
+        assert_eq!(s.state, Data);
+
+        // Make a state machine with a filter
+        let mut s = CmriStateMachine::new();
+        s.filter(0x64);
+
+        // Send the same address
+        s.process(CMRI_PREAMBLE_BYTE).unwrap();
+        s.process(CMRI_PREAMBLE_BYTE).unwrap();
+        s.process(CMRI_START_BYTE).unwrap();
+        let res = s.process(0x64);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Type);
+
+        // Make a new state machine
+        let mut s = CmriStateMachine::new();
+        s.filter(0x64);
+
+        assert!(s.address_filter.is_some());
+
+        // Send a different address
+        s.process(CMRI_PREAMBLE_BYTE).unwrap();
+        s.process(CMRI_PREAMBLE_BYTE).unwrap();
+        s.process(CMRI_START_BYTE).unwrap();
+        let res = s.process(0x65);
+        assert_eq!(res, Ok(Listening));
+        assert_eq!(s.state, Idle);
+        assert_eq!(s.position, 0);
     }
 
     #[test]
@@ -318,12 +369,12 @@ mod test {
 
     /// Utility function to produce a state machine in the "accepting
     /// data" state to make testing later states easier
-    fn get_to_data_section() -> Result<CmriStateMachine> {
+    fn get_to_data_section(addr: u8) -> Result<CmriStateMachine> {
         let mut s = CmriStateMachine::new();
         s.process(CMRI_PREAMBLE_BYTE)?;
         s.process(CMRI_PREAMBLE_BYTE)?;
         s.process(CMRI_START_BYTE)?;
-        s.process(0x43)?; // Address
+        s.process(addr)?; // Address
         s.process(0x65)?; // Message type
 
         Ok(s)
