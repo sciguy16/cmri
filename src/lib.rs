@@ -1,11 +1,19 @@
 #![no_std]
 
+#[cfg(feature = "std")]
+extern crate std;
+
 use core::convert::TryFrom;
 pub use error::{Error, Result};
 pub use node_types::*;
 
 pub mod error;
 pub mod node_types;
+
+#[cfg(feature = "std")]
+pub mod cmri_socket;
+#[cfg(feature = "std")]
+pub use cmri_socket::{CmriSocket, Duplex};
 
 /// This is the length calculated from
 /// https://github.com/madleech/ArduinoCMRI/blob/master/CMRI.h
@@ -105,6 +113,21 @@ impl CmriMessage {
         }
     }
 
+    pub fn address(&mut self, addr: u8) -> &mut Self {
+        self.address = Some(addr);
+        self
+    }
+
+    pub fn payload(&mut self, payload: &[u8]) -> Result<&mut Self> {
+        payload_from_slice(&mut self.payload, payload)?;
+        Ok(self)
+    }
+
+    pub fn message_type(&mut self, t: MessageType) -> &mut Self {
+        self.message_type = Some(t);
+        self
+    }
+
     /// Push a byte onto the payload
     fn push(&mut self, byte: u8) -> Result<()> {
         if self.len == MAX_PAYLOAD_LEN {
@@ -123,7 +146,7 @@ impl CmriMessage {
     }
 
     /// Encode the message into a transmit buffer
-    pub fn encode(self, buf: &mut [u8; TX_BUFFER_LEN]) -> Result<()> {
+    pub fn encode(&self, buf: &mut [u8; TX_BUFFER_LEN]) -> Result<()> {
         let mut pos: usize = 0;
 
         // Two PREAMBLEs
