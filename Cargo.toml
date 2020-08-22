@@ -10,6 +10,10 @@ repository = "https://github.com/sciguy16/cmri"
 keywords = ["CMRI", "Railway", "Railroad", "RS485"]
 categories = ["embedded", "no-std", "science::robotics"]
 
+[lib]
+name = "cmri"
+path = "src/lib.rs"
+
 [dependencies]
 crossbeam-channel = "0.4.2"
 
