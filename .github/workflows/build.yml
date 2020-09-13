@@ -37,3 +37,8 @@ jobs:
 
       - name: Run unit tests
         run: cargo test
+
+      - name: Run feature tests
+        run: |
+          cargo install cargo-test-all-features
+          cargo test-all-features
