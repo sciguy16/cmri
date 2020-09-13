@@ -1,0 +1,13 @@
+[package]
+name = "arduino_node"
+version = "0.1.0"
+authors = ["David Young <david@thedavidyoung.co.uk>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cmri = { "path" = "../../", "default-features" = false }
+#ruduino = "0.2"
+ruduino = { "path" = "../../../ruduino" } # local clone with pull/32 merged

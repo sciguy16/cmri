@@ -15,9 +15,9 @@ name = "cmri"
 path = "src/lib.rs"
 
 [dependencies]
-crossbeam-channel = "0.4.2"
 
 [dev-dependencies]
+crossbeam-channel = "0.4.2"
 rppal = "0.11"
 hex = "0.4"
 
