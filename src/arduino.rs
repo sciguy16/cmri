@@ -91,8 +91,15 @@ impl CmriProcessor {
         todo!()
     }
 
-    pub fn set_byte(byte: u8, state: u8) {
-        todo!()
+    pub fn set_byte(&mut self, byte: u8, state: u8) {
+        // ignore overflows
+        if byte > OUTPUT_BYTES - 1 {
+            return;
+        }
+
+        let mut bytes = self.input_bits.to_be_bytes();
+        bytes[byte as usize] = state;
+        self.input_bits = u64::from_be_bytes(bytes);
     }
 }
 
@@ -177,6 +184,35 @@ mod test {
             eprintln!("Converted: {:x}", converted);
 
             assert_eq!(converted, number);
+        }
+    }
+
+    #[test]
+    fn set_byte() {
+        let mut p = CmriProcessor::new(9600);
+        let bytes: [u8; 8] = [12, 34, 45, 67, 78, 89, 123, 43];
+
+        for (n, b) in bytes.iter().enumerate() {
+            p.set_byte(n as u8, *b);
+        }
+
+        assert_eq!(p.input_bits, u64::from_be_bytes(bytes));
+    }
+
+    #[test]
+    fn set_byte_random() {
+        let mut p = CmriProcessor::new(9600);
+        let mut bytes = [0_u8; 8];
+
+        for _ in (0..5) {
+            // Pick 8 random bytes
+            for (n, b) in bytes.iter_mut().enumerate() {
+                *b = random();
+                p.set_byte(n as u8, *b);
+            }
+            eprintln!("Random bytes: {:?}", bytes);
+
+            assert_eq!(p.input_bits, u64::from_be_bytes(bytes));
         }
     }
 }
