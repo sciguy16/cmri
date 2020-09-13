@@ -7,7 +7,7 @@
 
 #![no_std]
 
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", test))]
 extern crate std;
 
 use core::convert::TryFrom;
