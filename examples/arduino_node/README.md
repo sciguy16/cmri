@@ -8,9 +8,10 @@ Build:
 
 ```
 rustup override set nightly
+rustup component add rust-src
 
 # Compile the crate to an ELF executable.
-cargo build -Z build-std=core --target avr-atmega328p.json --release
+cargo +nightly build -Z build-std=core --target avr-atmega328p.json --release
 ```
 
 Flash:

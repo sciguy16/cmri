@@ -12,7 +12,7 @@ const OUTPUT_BITS: u8 = 64;
 const OUTPUT_BYTES: u8 = OUTPUT_BITS / 8;
 
 /// Stores 64 input and 64 output bits as u64. This may not be as efficient
-/// as using arrays of u8 on an 8-bit CPU, but hard to tell without testing
+/// as using arrays of u8 on a 16-bit CPU, but hard to tell without testing
 #[derive(Default)]
 pub struct CmriProcessor {
     input_bits: u64,
