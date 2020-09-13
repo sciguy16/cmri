@@ -5,9 +5,8 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-
 use crate::Result;
-use crate::{CmriMessage, TX_BUFFER_LEN};
+use crate::{CmriMessage, CmriStateMachine, RxState, TX_BUFFER_LEN};
 use std::boxed::Box;
 use std::io::{Read, Write};
 
@@ -25,6 +24,7 @@ pub struct CmriSocket {
     tx_buffer: [u8; TX_BUFFER_LEN],
     tx_switch: fn(bool) -> (),
     rx_callback: fn(&CmriMessage) -> (),
+    state: CmriStateMachine,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -46,6 +46,7 @@ impl CmriSocket {
             tx_buffer: [0; TX_BUFFER_LEN],
             tx_switch: |_| {},
             rx_callback,
+            state: CmriStateMachine::new(),
         }
     }
 
@@ -72,6 +73,30 @@ impl CmriSocket {
         (self.tx_switch)(false);
 
         Ok(())
+    }
+
+    /// Blocking RX
+    pub fn receive(&mut self) -> Result<()> {
+        let mut tmp_buffer = [0_u8];
+
+        loop {
+            self.transport.read(&mut tmp_buffer)?;
+            if self.state.process(tmp_buffer[0])? == RxState::Complete {
+                self.rx_buffer = self.state.message;
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Calls the blocking RX in a loop, calling the callback
+    pub fn receive_loop(&mut self) -> ! {
+        loop {
+            if self.receive().is_ok() {
+                // process a message if one arrive successfully
+                (self.rx_callback)(&self.rx_buffer);
+            }
+        }
     }
 }
 
