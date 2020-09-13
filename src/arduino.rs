@@ -7,7 +7,9 @@ const CPU_FREQUENCY_HZ: u64 = 16_000_000;
 
 /// Hardcode 64 in/64 out for now
 const INPUT_BITS: u8 = 64;
+const INPUT_BYTES: u8 = INPUT_BITS / 8;
 const OUTPUT_BITS: u8 = 64;
+const OUTPUT_BYTES: u8 = OUTPUT_BITS / 8;
 
 /// Stores 64 input and 64 output bits as u64. This may not be as efficient
 /// as using arrays of u8 on an 8-bit CPU, but hard to tell without testing
@@ -74,8 +76,15 @@ impl CmriProcessor {
         self.output_bits & mask != 0
     }
 
-    pub fn get_byte(byte: u8) -> u8 {
-        todo!()
+    pub fn get_byte(&self, byte: u8) -> u8 {
+        // ignore overflows
+        if byte > OUTPUT_BYTES - 1 {
+            return 0;
+        }
+
+        self.output_bits.to_be_bytes()[byte as usize]
+
+        //((self.output_bits >> 8*(OUTPUT_BYTES - 1 - byte)) & 0xff) as u8
     }
 
     pub fn set_bit(bit: u8, state: bool) {
@@ -129,6 +138,45 @@ mod test {
             for (n, bit) in bits(number).iter().enumerate() {
                 assert_eq!(p.get_bit(n as u8), *bit);
             }
+        }
+    }
+
+    #[test]
+    fn get_byte() {
+        let mut p = CmriProcessor::new(9600);
+        p.output_bits = 0x1234_5678_90ab_cdef;
+
+        assert_eq!(p.get_byte(0), 0x12);
+        assert_eq!(p.get_byte(1), 0x34);
+
+        assert_eq!(p.get_byte(2), 0x56);
+        assert_eq!(p.get_byte(3), 0x78);
+
+        assert_eq!(p.get_byte(4), 0x90);
+        assert_eq!(p.get_byte(5), 0xab);
+
+        assert_eq!(p.get_byte(6), 0xcd);
+        assert_eq!(p.get_byte(7), 0xef);
+    }
+
+    #[test]
+    fn get_byte_random() {
+        let mut p = CmriProcessor::new(9600);
+        for _ in 0..5 {
+            let number: u64 = random();
+            eprintln!("Random number is: {}", number);
+            eprintln!("Hex representation: {:16x}", number);
+            p.output_bits = number;
+
+            let mut bytes = [0_u8; 8];
+            for (n, b) in bytes.iter_mut().enumerate() {
+                *b = p.get_byte(n as u8);
+            }
+            eprintln!("Bytes array: {:?}", bytes);
+            let converted = u64::from_be_bytes(bytes);
+            eprintln!("Converted: {:x}", converted);
+
+            assert_eq!(converted, number);
         }
     }
 }
