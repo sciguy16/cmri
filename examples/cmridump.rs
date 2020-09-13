@@ -5,7 +5,6 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-
 use cmri::{CmriMessage, CmriStateMachine, RxState};
 use std::io::Read;
 use std::net::{Shutdown, TcpListener, TcpStream};

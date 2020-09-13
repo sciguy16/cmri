@@ -5,7 +5,6 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-
 #![no_std]
 
 #[cfg(feature = "std")]
@@ -109,6 +108,7 @@ pub struct CmriStateMachine {
     address_filter: Option<u8>,
 }
 
+#[derive(Copy, Clone)]
 pub struct CmriMessage {
     pub address: Option<u8>,
     pub message_type: Option<MessageType>,
