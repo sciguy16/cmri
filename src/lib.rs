@@ -23,6 +23,11 @@ pub mod cmri_socket;
 #[cfg(feature = "std")]
 pub use cmri_socket::{CmriSocket, Duplex};
 
+#[cfg(feature = "arduino")]
+pub mod arduino;
+#[cfg(feature = "arduino")]
+pub use arduino::CmriProcessor;
+
 /// This is the length calculated from
 /// https://github.com/madleech/ArduinoCMRI/blob/master/CMRI.h
 /// (64 i/o cards @ 32 bits each + packet type and address bytes)
