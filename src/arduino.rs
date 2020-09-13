@@ -87,13 +87,21 @@ impl CmriProcessor {
         //((self.output_bits >> 8*(OUTPUT_BYTES - 1 - byte)) & 0xff) as u8
     }
 
-    pub fn set_bit(bit: u8, state: bool) {
-        todo!()
+    pub fn set_bit(&mut self, bit: u8, state: bool) {
+        // ignore overflows
+        if bit > INPUT_BITS - 1 {
+            return;
+        }
+
+        match state {
+            true => self.input_bits |= 1 << (INPUT_BITS - 1 - bit),
+            false => self.input_bits &= !(1 << (INPUT_BITS - 1 - bit)),
+        }
     }
 
     pub fn set_byte(&mut self, byte: u8, state: u8) {
         // ignore overflows
-        if byte > OUTPUT_BYTES - 1 {
+        if byte > INPUT_BYTES - 1 {
             return;
         }
 
@@ -213,6 +221,36 @@ mod test {
             eprintln!("Random bytes: {:?}", bytes);
 
             assert_eq!(p.input_bits, u64::from_be_bytes(bytes));
+        }
+    }
+
+    #[test]
+    fn set_bit() {
+        let mut p = CmriProcessor::new(9600);
+
+        // 1001 1010 00000000...0
+        let number: u64 = 0x9a00000000000000;
+
+        p.set_bit(0, true);
+        p.set_bit(3, true);
+        p.set_bit(4, true);
+        p.set_bit(6, true);
+
+        assert_eq!(p.input_bits, number);
+    }
+
+    #[test]
+    fn set_bit_random() {
+        let mut p = CmriProcessor::new(9600);
+
+        for _ in 0..5 {
+            let number: u64 = random();
+
+            for (n, bit) in bits(number).iter().enumerate() {
+                p.set_bit(n as u8, *bit);
+            }
+
+            assert_eq!(p.input_bits, number);
         }
     }
 }
