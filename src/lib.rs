@@ -145,7 +145,7 @@ impl CmriMessage {
     fn push(&mut self, byte: u8) -> Result<()> {
         if self.len == MAX_PAYLOAD_LEN {
             // Buffer is full, which is problematic
-            return Err(Error::OutOfBounds);
+            return Err(Error::DataTooLong);
         }
         self.payload[self.len] = byte;
         self.len += 1;
@@ -299,13 +299,21 @@ impl CmriStateMachine {
                     }
                     _ => {
                         // any other byte we take as data
-                        self.message.push(byte)?;
+                        if let Err(e) = self.message.push(byte) {
+                            // Reset the state machine so that we can start afresh
+                            self.clear();
+                            return Err(e);
+                        }
                     }
                 }
             }
             Escape => {
                 // Escape the next byte, so accept it as data.
-                self.message.push(byte)?;
+                if let Err(e) = self.message.push(byte) {
+                    // Error writing message -> reset state machine
+                    self.clear();
+                    return Err(e);
+                }
                 self.state = Data;
             }
         }
