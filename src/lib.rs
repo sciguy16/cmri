@@ -606,7 +606,7 @@ mod test {
         s.message.push(2).unwrap();
         s.message.push(1).unwrap();
         let res = s.message.push(0);
-        assert_eq!(res, Err(Error::OutOfBounds));
+        assert_eq!(res, Err(Error::DataTooLong));
     }
 
     #[test]
