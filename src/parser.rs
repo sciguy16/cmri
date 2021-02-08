@@ -66,6 +66,9 @@ named!(
     map_res!(one_of!("ITRP"), MessageType::try_from)
 );
 
+named!(stop, tag!(&[CMRI_STOP_BYTE]));
+named!(esc, tag!(&[CMRI_ESCAPE_BYTE]));
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -103,6 +106,28 @@ mod test {
 
         let inp = b"L";
         let res = message_type(inp);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_stop() {
+        let inp = b"\x03other stuff";
+        let (_, parsed) = stop(inp).unwrap();
+        assert_eq!(parsed, &[CMRI_STOP_BYTE]);
+
+        let inp = b"\x04other";
+        let res = stop(inp);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_esc() {
+        let inp = b"\x10other stuff";
+        let (_, parsed) = esc(inp).unwrap();
+        assert_eq!(parsed, &[CMRI_ESCAPE_BYTE]);
+
+        let inp = b"\x11other";
+        let res = esc(inp);
         assert!(res.is_err());
     }
 }
