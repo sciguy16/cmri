@@ -1,6 +1,13 @@
+use crate::parser::bytes::streaming::take;
 use crate::Error;
 use core::convert::TryFrom;
 use nom::*;
+
+/// This is the length calculated from
+/// https://github.com/madleech/ArduinoCMRI/blob/master/CMRI.h
+/// (64 i/o cards @ 32 bits each + packet type and address bytes)
+//const RX_BUFFER_LEN: usize = 258;
+pub const MAX_PAYLOAD_LEN: usize = 256;
 
 const CMRI_PREAMBLE_BYTE: u8 = 0xff;
 const CMRI_START_BYTE: u8 = 0x02;
@@ -68,6 +75,25 @@ named!(
 
 named!(stop, tag!(&[CMRI_STOP_BYTE]));
 named!(esc, tag!(&[CMRI_ESCAPE_BYTE]));
+
+//named!(payload_byte, switch!(esc, take(1), take(1)));
+
+//named!(payload, many_till!(payload_byte, stop));
+
+/*fn payload_byte(inp: &[u8]) -> IResult<&[u8], &[u8]> {
+    let (inp, byte) = take(1_usize)(inp)?;
+    let byte = byte[0];
+    if byte == CMRI_ESCAPE_BYTE {
+        let (inp, byte2) = take(2_usize)(inp)?;
+        let byte2 = byte2[0];
+        return Ok((inp, &[byte, byte2]));
+    }
+    Ok((inp, &[byte]))
+}*/
+
+pub fn parse_cmri(inp: &[u8]) -> IResult<&[u8], &[u8]> {
+    todo!()
+}
 
 #[cfg(test)]
 mod test {
