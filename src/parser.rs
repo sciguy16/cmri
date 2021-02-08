@@ -2,6 +2,11 @@ use crate::Error;
 use core::convert::TryFrom;
 use nom::*;
 
+const CMRI_PREAMBLE_BYTE: u8 = 0xff;
+const CMRI_START_BYTE: u8 = 0x02;
+const CMRI_STOP_BYTE: u8 = 0x03;
+const CMRI_ESCAPE_BYTE: u8 = 0x10;
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MessageType {
     /// Initialisation
@@ -52,14 +57,31 @@ impl core::fmt::Display for MessageType {
 }
 
 named!(
+    preamble,
+    tag!([CMRI_PREAMBLE_BYTE, CMRI_PREAMBLE_BYTE, CMRI_START_BYTE])
+);
+
+named!(
     message_type<MessageType>,
     map_res!(one_of!("ITRP"), MessageType::try_from)
 );
 
-
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_preamble() {
+        let pre = [CMRI_PREAMBLE_BYTE, CMRI_PREAMBLE_BYTE, CMRI_START_BYTE];
+
+        let inp = b"\xff\xff\x02";
+        let (_, parsed) = preamble(inp).unwrap();
+        assert_eq!(parsed, pre);
+
+        let inp = b"\xff\xfe\x02";
+        let res = preamble(inp);
+        assert!(res.is_err());
+    }
 
     #[test]
     fn test_message_type() {
