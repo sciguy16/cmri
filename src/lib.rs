@@ -16,6 +16,7 @@ pub use node_types::*;
 
 pub mod error;
 pub mod node_types;
+pub mod parser;
 
 #[cfg(feature = "std")]
 pub mod cmri_socket;

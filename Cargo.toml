@@ -21,6 +21,7 @@ std = []
 arduino = ["ruduino"]
 
 [dependencies]
+nom = "6.1"
 ruduino = { version = "0.2", optional = true }
 
 [dev-dependencies]
