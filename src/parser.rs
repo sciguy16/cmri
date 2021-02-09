@@ -1,6 +1,7 @@
-use crate::parser::bytes::streaming::take;
+//use crate::parser::bytes::streaming::take;
 use crate::Error;
 use core::convert::TryFrom;
+use nom::error::ErrorKind;
 use nom::*;
 
 /// This is the length calculated from
@@ -13,6 +14,52 @@ const CMRI_PREAMBLE_BYTE: u8 = 0xff;
 const CMRI_START_BYTE: u8 = 0x02;
 const CMRI_STOP_BYTE: u8 = 0x03;
 const CMRI_ESCAPE_BYTE: u8 = 0x10;
+
+/// To avoid allocations, we store payloads in a fixed-length buffer and
+/// keep the length alongside
+#[derive(Debug)]
+pub struct Payload {
+    buf: [u8; Self::MAX_LEN],
+    len: usize,
+}
+
+impl Payload {
+    pub const MAX_LEN: usize = MAX_PAYLOAD_LEN;
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn new() -> Self {
+        Self {
+            buf: [0; Self::MAX_LEN],
+            len: 0,
+        }
+    }
+
+    pub fn try_push(&mut self, inp: u8) -> Result<(), Error> {
+        if self.len == Self::MAX_LEN {
+            return Err(Error::DataTooLong);
+        }
+        self.buf[self.len] = inp;
+        self.len += 1;
+        Ok(())
+    }
+
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+}
+
+impl Default for Payload {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MessageType {
@@ -76,20 +123,46 @@ named!(
 named!(stop, tag!(&[CMRI_STOP_BYTE]));
 named!(esc, tag!(&[CMRI_ESCAPE_BYTE]));
 
-//named!(payload_byte, switch!(esc, take(1), take(1)));
+fn payload(inp: &[u8]) -> IResult<&[u8], Payload> {
+    let mut payload = Payload::new();
+    let mut is_escape = false;
 
-//named!(payload, many_till!(payload_byte, stop));
+    // Need to track the index into the input so that the correct slice
+    // can be returned at the end
+    for (idx, byte) in inp.iter().enumerate() {
+        if is_escape {
+            //TODO error if byte is not valid to have been escaped
+            payload.try_push(*byte).map_err(|_| {
+                nom::Err::Failure(nom::error::Error {
+                    input: inp,
+                    code: ErrorKind::TooLarge,
+                })
+            })?;
 
-/*fn payload_byte(inp: &[u8]) -> IResult<&[u8], &[u8]> {
-    let (inp, byte) = take(1_usize)(inp)?;
-    let byte = byte[0];
-    if byte == CMRI_ESCAPE_BYTE {
-        let (inp, byte2) = take(2_usize)(inp)?;
-        let byte2 = byte2[0];
-        return Ok((inp, &[byte, byte2]));
+            is_escape = false;
+        } else if *byte == CMRI_STOP_BYTE {
+            // Message complete; return it
+            // The remaining input is from the next index (current is the
+            // STOP byte)
+            return Ok((&inp[(idx + 1)..], payload));
+        } else if *byte == CMRI_ESCAPE_BYTE {
+            // Escape byte -> ignore this and just accept the next
+            // byte
+            is_escape = true;
+        } else {
+            // Any other bytes should be accepted
+            payload.try_push(*byte).map_err(|_| {
+                nom::Err::Failure(nom::error::Error {
+                    input: inp,
+                    code: ErrorKind::TooLarge,
+                })
+            })?;
+        }
     }
-    Ok((inp, &[byte]))
-}*/
+
+    // Reached end of input without a STOP message
+    Result::Err(Err::Incomplete(Needed::Unknown))
+}
 
 pub fn parse_cmri(inp: &[u8]) -> IResult<&[u8], &[u8]> {
     todo!()
@@ -155,5 +228,91 @@ mod test {
         let inp = b"\x11other";
         let res = esc(inp);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_payload() {
+        // Regular, valid message
+        // STOP = 0x03
+        let inp: [u8; 9] = *b"ABCDEFG\x03H";
+        let (rem, p) = payload(&inp).unwrap();
+        // Should match the input without the stop byte
+        assert_eq!(p.as_slice(), b"ABCDEFG", "regular - values");
+        std::println!("rem: {:?}", rem);
+        assert_eq!(rem.len(), 1, "regular - remainder len");
+        assert_eq!(rem[0], b'H', "regular - remainder val");
+
+        // Test escape byte = 0x10
+        let inp: &[u8] = &[
+            0x13,
+            0x12,
+            0x11,
+            CMRI_ESCAPE_BYTE,
+            CMRI_ESCAPE_BYTE,
+            0x09,
+            0x08,
+            CMRI_STOP_BYTE,
+        ];
+        let (rem, p) = payload(inp).unwrap();
+        assert_eq!(
+            p.as_slice(),
+            &[0x13, 0x12, 0x11, 0x10, 0x09, 0x08],
+            "esc - values"
+        );
+        std::println!("rem: {:?}", rem);
+        assert_eq!(rem.len(), 0, "esc - remainder len");
+
+        // Escape a few bytes to make sure the counters line up
+        let inp: &[u8] = &[
+            b'A',
+            b'B',
+            b'C',
+            b'D',
+            CMRI_ESCAPE_BYTE,
+            CMRI_ESCAPE_BYTE,
+            b'E',
+            b'F',
+            CMRI_ESCAPE_BYTE,
+            CMRI_STOP_BYTE,
+            CMRI_ESCAPE_BYTE,
+            CMRI_STOP_BYTE,
+            b'G',
+            b'H',
+            b'I',
+            CMRI_ESCAPE_BYTE,
+            CMRI_ESCAPE_BYTE,
+            CMRI_ESCAPE_BYTE,
+            CMRI_STOP_BYTE,
+            CMRI_STOP_BYTE,
+            b'S',
+            b'P',
+            b'A',
+            b'R',
+            b'E',
+        ];
+        let (rem, p) = payload(inp).unwrap();
+        assert_eq!(p.as_slice(), b"ABCD\x10EF\x03\x03GHI\x10\x03");
+        assert_eq!(rem, b"SPARE");
+
+        // Test a message that's too short and missing its STOP byte
+        let inp: &[u8] = b"HELLO THIS IS A MESSAGE";
+        let res = payload(&inp);
+        assert!(res.is_err());
+        if let Err(nom::Err::Incomplete(_)) = res {
+            // all OK!
+        } else {
+            panic!("Expected INCOMPLETE error");
+        }
+
+        // Test a message that never terminates (and is too long)
+        let inp: &[u8] = &[b'A'; MAX_PAYLOAD_LEN + 10];
+        let res = payload(inp);
+
+        assert!(res.is_err());
+        if let Err(nom::Err::Failure(e)) = res {
+            assert_eq!(e.code, ErrorKind::TooLarge);
+        } else {
+            panic!("Expected FAILURE error!");
+        }
     }
 }
