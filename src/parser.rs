@@ -1,4 +1,4 @@
-//use crate::parser::bytes::streaming::take;
+use crate::parser::bytes::streaming::take;
 use crate::Error;
 use core::convert::TryFrom;
 use nom::error::ErrorKind;
@@ -15,9 +15,16 @@ const CMRI_START_BYTE: u8 = 0x02;
 const CMRI_STOP_BYTE: u8 = 0x03;
 const CMRI_ESCAPE_BYTE: u8 = 0x10;
 
+#[derive(Copy, Clone, Debug)]
+pub struct CmriMessage {
+    pub address: u8,
+    pub message_type: MessageType,
+    pub payload: Payload,
+}
+
 /// To avoid allocations, we store payloads in a fixed-length buffer and
 /// keep the length alongside
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Payload {
     buf: [u8; Self::MAX_LEN],
     len: usize,
@@ -62,15 +69,16 @@ impl Default for Payload {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[repr(u8)]
 pub enum MessageType {
     /// Initialisation
-    Init = 'I' as isize,
+    Init = 'I' as u8,
     /// Controller -> Node
-    Set = 'T' as isize,
+    Set = 'T' as u8,
     /// Node -> Controller
-    Get = 'R' as isize,
+    Get = 'R' as u8,
     /// Controller requests status from node
-    Poll = 'P' as isize,
+    Poll = 'P' as u8,
 }
 
 impl TryFrom<&[u8]> for MessageType {
@@ -164,8 +172,20 @@ fn payload(inp: &[u8]) -> IResult<&[u8], Payload> {
     Result::Err(Err::Incomplete(Needed::Unknown))
 }
 
-pub fn parse_cmri(inp: &[u8]) -> IResult<&[u8], &[u8]> {
-    todo!()
+pub fn parse_cmri(inp: &[u8]) -> IResult<&[u8], CmriMessage> {
+    let (inp, _) = preamble(inp)?;
+    let (inp, addr) = take(1_usize)(inp)?;
+    let (inp, message_type) = message_type(inp)?;
+    let (inp, payload) = payload(inp)?;
+
+    Ok((
+        inp,
+        CmriMessage {
+            address: addr[0],
+            message_type,
+            payload,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -314,5 +334,45 @@ mod test {
         } else {
             panic!("Expected FAILURE error!");
         }
+    }
+
+    #[test]
+    fn decode_full_message() {
+        use MessageType::*;
+        #[rustfmt::skip]
+        let message1 = [
+            CMRI_PREAMBLE_BYTE,
+            CMRI_PREAMBLE_BYTE,
+            CMRI_START_BYTE,
+            0x86,                               // Address
+            Init as u8,                         // Type
+            0x41, 0x41, 0x41, 0x41,             // Message
+            CMRI_STOP_BYTE,
+        ];
+
+        let (_, msg1) = parse_cmri(&message1).unwrap();
+        assert_eq!(msg1.address, 0x86);
+        assert_eq!(msg1.message_type, Init);
+        assert_eq!(msg1.payload.as_slice(), b"AAAA");
+
+        #[rustfmt::skip]
+        let message2 = [
+            CMRI_PREAMBLE_BYTE,
+            CMRI_PREAMBLE_BYTE,
+            CMRI_START_BYTE,
+            0xa2,                               // Address
+            Init as u8,                         // Type
+            0x41, 0x41, 0x41, 0x41,             // Message
+            CMRI_ESCAPE_BYTE, CMRI_STOP_BYTE,   // Message
+            0x42, 0x42, 0x42, 0x42,             // Message
+            CMRI_ESCAPE_BYTE, CMRI_ESCAPE_BYTE, // Message
+            0x43, 0x43, 0x43, 0x43,             // Message
+            CMRI_STOP_BYTE,
+        ];
+
+        let (_, msg2) = parse_cmri(&message2).unwrap();
+        assert_eq!(msg2.address, 0xa2);
+        assert_eq!(msg2.message_type, Init);
+        assert_eq!(msg2.payload.as_slice(), b"AAAA\x03BBBB\x10CCCC");
     }
 }
