@@ -10,10 +10,10 @@ use nom::*;
 //const RX_BUFFER_LEN: usize = 258;
 pub const MAX_PAYLOAD_LEN: usize = 256;
 
-const CMRI_PREAMBLE_BYTE: u8 = 0xff;
-const CMRI_START_BYTE: u8 = 0x02;
-const CMRI_STOP_BYTE: u8 = 0x03;
-const CMRI_ESCAPE_BYTE: u8 = 0x10;
+pub const CMRI_PREAMBLE_BYTE: u8 = 0xff;
+pub const CMRI_START_BYTE: u8 = 0x02;
+pub const CMRI_STOP_BYTE: u8 = 0x03;
+pub const CMRI_ESCAPE_BYTE: u8 = 0x10;
 
 #[derive(Copy, Clone, Debug)]
 pub struct CmriMessage {
